@@ -1,85 +1,77 @@
 from flask import Flask, request, abort
-
-from linebot import (
-    LineBotApi, WebhookHandler
-)
-from linebot.exceptions import (
-    InvalidSignatureError
-)
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
 from linebot.models import *
 
-#======python的函數庫==========
-import tempfile, os
+import os
 import datetime
-import openai
 import time
+import threading
 import traceback
-#======python的函數庫==========
 
 app = Flask(__name__)
-static_tmp_path = os.path.join(os.path.dirname(__file__), 'static', 'tmp')
+
 # Channel Access Token
 line_bot_api = LineBotApi(os.getenv('CHANNEL_ACCESS_TOKEN'))
 # Channel Secret
 handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
-# OPENAI API Key初始化設定
-openai.api_key = os.getenv('OPENAI_API_KEY')
 
-
-def GPT_response(text):
-    # 接收回應
-    response = openai.Completion.create(model="gpt-3.5-turbo-instruct", prompt=text, temperature=0.5, max_tokens=500)
-    print(response)
-    # 重組回應
-    answer = response['choices'][0]['text'].replace('。','')
-    return answer
-
+# 用於存儲用戶的吃藥狀態
+user_reminders = {}
+reminder_interval = 15  # 重新提醒的間隔時間（分鐘）
 
 # 監聽所有來自 /callback 的 Post Request
 @app.route("/callback", methods=['POST'])
 def callback():
-    # get X-Line-Signature header value
     signature = request.headers['X-Line-Signature']
-    # get request body as text
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
-    # handle webhook body
+
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
     return 'OK'
 
-
 # 處理訊息
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    msg = event.message.text
-    try:
-        GPT_answer = GPT_response(msg)
-        print(GPT_answer)
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(GPT_answer))
-    except:
-        print(traceback.format_exc())
-        line_bot_api.reply_message(event.reply_token, TextSendMessage('你所使用的OPENAI API key額度可能已經超過，請於後台Log內確認錯誤訊息'))
-        
+    msg = event.message.text.lower()
+    user_id = event.source.user_id
 
-@handler.add(PostbackEvent)
-def handle_message(event):
-    print(event.postback.data)
+    if '吃了' in msg:
+        user_reminders[user_id] = {'status': 'done', 'last_reminder': None}
+        line_bot_api.reply_message(event.reply_token, TextSendMessage('好的，記得明天同樣時間吃藥哦！'))
+    else:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage('請在每天晚上10點後回覆 "吃了" 以停止提醒。'))
 
+# 檢查並發送提醒
+def check_reminders():
+    while True:
+        now = datetime.datetime.now()
+        if now.hour == 22 and now.minute == 0:
+            for user_id in user_reminders:
+                user_reminders[user_id] = {'status': 'pending', 'last_reminder': None}
+                try:
+                    line_bot_api.push_message(user_id, TextSendMessage('該吃藥了！請回覆 "吃了" 以停止提醒。'))
+                except Exception as e:
+                    print(f'Failed to send initial reminder to {user_id}: {e}')
+        else:
+            for user_id, reminder_info in user_reminders.items():
+                if reminder_info['status'] == 'pending':
+                    last_reminder = reminder_info['last_reminder']
+                    if last_reminder is None or (now - last_reminder).total_seconds() > reminder_interval * 60:
+                        try:
+                            line_bot_api.push_message(user_id, TextSendMessage('該吃藥了！請回覆 "吃了" 以停止提醒。'))
+                            user_reminders[user_id]['last_reminder'] = now
+                        except Exception as e:
+                            print(f'Failed to send follow-up reminder to {user_id}: {e}')
+        time.sleep(60)
 
-@handler.add(MemberJoinedEvent)
-def welcome(event):
-    uid = event.joined.members[0].user_id
-    gid = event.source.group_id
-    profile = line_bot_api.get_group_member_profile(gid, uid)
-    name = profile.display_name
-    message = TextSendMessage(text=f'{name}歡迎加入')
-    line_bot_api.reply_message(event.reply_token, message)
-        
-        
-import os
+# 在後台運行檢查提醒的函數
+reminder_thread = threading.Thread(target=check_reminders)
+reminder_thread.start()
+
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
