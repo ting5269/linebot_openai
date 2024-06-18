@@ -12,9 +12,9 @@ import traceback
 app = Flask(__name__)
 
 # Channel Access Token
-line_bot_api = LineBotApi(os.getenv('CHANNEL_ACCESS_TOKEN'))
+line_bot_api = LineBotApi(os.getenv('gqHpZtd1vx5rrSoMSv12HUSx+fFw9lTKfAAuDgQDDdcNMOpA3jKEbC/gAquc4JGBvWomMnloLp8/40rNFdCQkm4f6v1kte5s1+76wS+9kQ/uPaQGTvyUAVehqo+BtanPV4GGasN+ICKchMKhpUoPlAdB04t89/1O/w1cDnyilFU='))
 # Channel Secret
-handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
+handler = WebhookHandler(os.getenv('9a31037c985e085e319ec091700885c8'))
 
 # 用於存儲用戶的吃藥狀態
 user_reminders = {}
